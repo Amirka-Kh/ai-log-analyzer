@@ -7,7 +7,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from ai_ops_agent.reporting.models import Report, Severity
+from ai_ops_agent.reporting.models import SEVERITY_RANK, Report, Severity
 
 SEVERITY_STYLE = {
     Severity.sev1: "bold white on red",
@@ -53,7 +53,7 @@ def render_report(report: Report, console: Console | None = None, verbose: bool 
         table.add_column("Count", width=7, justify="right")
         table.add_column("Finding", overflow="fold")
         table.add_column("Lines", width=14)
-        for f in sorted(report.findings, key=lambda f: f.severity.value):
+        for f in sorted(report.findings, key=lambda f: SEVERITY_RANK[f.severity], reverse=True):
             lines = ",".join(str(n) for n in f.line_refs[:3]) or "-"
             table.add_row(f.severity.value, str(f.count), f.title, lines)
         console.print(table)

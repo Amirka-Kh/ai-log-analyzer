@@ -12,8 +12,8 @@ into the *same* engine in later phases.
 |---|---|---|
 | 1 | Core engine + `ai-ops analyze` (parsing, template clustering, signals, LLM verdict, terminal renderer) | ✅ implemented |
 | 2 | `ai-ops watch` (streaming, baseline learning, trigger policy, cooldowns, session summary) | ✅ implemented |
-| 3 | Mattermost outbound (cards, threading, retry queue) | ⏳ next |
-| 4 | Reactive alert path (webhook ingest, dedupe, cluster tool layer, agent loop) | ⏳ |
+| 3 | Mattermost outbound (cards, threading, channel routing, retry queue) | ✅ implemented |
+| 4 | Reactive alert path (webhook ingest, dedupe, cluster tool layer, agent loop) | ⏳ next |
 | 5 | Mattermost inbound (slash commands, buttons, feedback) | ⏳ |
 | 6 | SSH diagnostic tool (allowlisted) | ⏳ |
 | 7 | Night audit | ⏳ |
@@ -103,6 +103,33 @@ watch:
   baseline_seconds: 120
 redact: true
 ```
+
+### Mattermost notifications (Phase 3)
+
+Configure a bot account + Personal Access Token (preferred — enables
+threading, in-place status updates, and file uploads):
+
+```bash
+export AI_OPS_MATTERMOST_URL=https://mattermost.example.com
+export AI_OPS_MATTERMOST_TOKEN=xxxx          # bot PAT
+export AI_OPS_MATTERMOST_TEAM=myteam
+export AI_OPS_MATTERMOST_DEFAULT_CHANNEL=ops-alerts
+export AI_OPS_MATTERMOST_NOISE_CHANNEL=ops-noise   # false_positive/noisy_rule land here
+
+ai-ops analyze --source app.log --notify mattermost
+ai-ops watch "docker logs -f api" --notify mattermost --channel ops-alerts
+```
+
+Incident posts are severity-colored cards (sev1 `#d24b4b` + `@here`, sev2
+`#e8a33d`, sev3 `#4b8bd2`, info `#5a5a5a`) with the full markdown report as a
+threaded file attachment. One investigation = one root post — repeat findings
+(watch) thread under it. Messages over the 4000-char cap are split into the
+thread; rate limits are honored with backoff; undeliverable posts persist to
+`~/.ai-ops/mattermost-queue.jsonl` and are flushed on the next successful
+delivery, so a Mattermost outage doesn't lose an incident.
+
+`AI_OPS_MATTERMOST_WEBHOOK_URL` is a fallback for the simplest deployments —
+note the feature loss: no threading, no message updates, no file uploads.
 
 See [docs/cli.md](docs/cli.md) for the full command reference and
 [SECURITY.md](SECURITY.md) for the threat model.

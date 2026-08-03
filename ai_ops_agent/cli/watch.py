@@ -44,11 +44,20 @@ def watch_command(
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress the status line."),
     fmt: str | None = typer.Option(None, "--format", help="Force input format."),
     config_file: str | None = typer.Option(None, "--config"),
+    notify: str = typer.Option(
+        "none", "--notify", help="none | mattermost — post findings as a threaded incident."
+    ),
+    channel: str | None = typer.Option(
+        None, "--channel", help="Mattermost channel override (with --notify mattermost)."
+    ),
 ) -> None:
     """Continuously watch a stream; learn a baseline, then alert on anomalies."""
     err = Console(stderr=True)
     if command is None and source is None:
         err.print("[red]error:[/red] give a command argument or --source FILE")
+        raise typer.Exit(EXIT_ERROR)
+    if notify not in ("none", "mattermost"):
+        err.print(f"[red]error:[/red] invalid --notify {notify!r}; use none|mattermost")
         raise typer.Exit(EXIT_ERROR)
     config = load_config(config_file)
     config.watch.window_seconds = window
@@ -60,6 +69,17 @@ def watch_command(
     llm_client = None if no_llm else make_client(config.llm)
     engine = AnalysisEngine(config, llm_client=llm_client) if llm_client else None
 
+    notifier = None
+    if notify == "mattermost":
+        from ai_ops_agent.cli.analyze import build_notifier
+        from ai_ops_agent.streaming.source import SourceError
+
+        try:
+            notifier = build_notifier(config)
+        except SourceError as exc:
+            err.print(f"[red]error:[/red] {exc}")
+            raise typer.Exit(EXIT_ERROR) from None
+
     try:
         asyncio.run(
             _run_watch(
@@ -70,10 +90,15 @@ def watch_command(
                 fmt=fmt,
                 restart=restart,
                 quiet=quiet,
+                notifier=notifier,
+                channel=channel,
             )
         )
     except KeyboardInterrupt:
         pass
+
+
+WATCH_THREAD_KEY = "watch-session"
 
 
 async def _run_watch(
@@ -84,29 +109,32 @@ async def _run_watch(
     fmt: str | None,
     restart: bool,
     quiet: bool,
+    notifier=None,
+    channel: str | None = None,
 ) -> None:
     console = Console()
     session = WatchSession(config.watch, fmt=fmt)
+    sink = _NotificationSink(console, session, engine, notifier, channel, quiet)
     stop = asyncio.Event()
 
     async def pump() -> None:
         while not stop.is_set():
             if command is not None:
-                code = await _pump_command(command, session, console, engine, quiet)
+                code = await _pump_command(command, session, sink)
                 if not restart or stop.is_set():
                     if code is not None:
                         note = session.process_exit(code, time.monotonic())
                         if note:
-                            _print_notification(console, note)
+                            sink.handle(note)
                     return
                 console.print("[dim]process exited; restarting in 2s (--restart)[/dim]")
                 await asyncio.sleep(2)
             else:
                 assert source is not None
-                await _pump_file(Path(source), session, console, engine, quiet, stop)
+                await _pump_file(Path(source), session, sink, stop)
                 return
 
-    ticker = asyncio.create_task(_tick_loop(session, console, engine, quiet, stop))
+    ticker = asyncio.create_task(_tick_loop(session, console, sink, quiet, stop))
     try:
         if not quiet:
             console.print(
@@ -120,11 +148,10 @@ async def _run_watch(
         with contextlib.suppress(asyncio.CancelledError):
             await ticker
         _print_summary(console, session)
+        sink.post_summary()
 
 
-async def _pump_command(
-    command: str, session: WatchSession, console: Console, engine, quiet: bool
-) -> int | None:
+async def _pump_command(command: str, session: WatchSession, sink: _NotificationSink) -> int | None:
     argv = shlex.split(command)
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -133,7 +160,7 @@ async def _pump_command(
             stderr=asyncio.subprocess.STDOUT,
         )
     except FileNotFoundError:
-        console.print(f"[red]error:[/red] command not found: {argv[0]}")
+        sink.console.print(f"[red]error:[/red] command not found: {argv[0]}")
         raise typer.Exit(EXIT_ERROR) from None
     assert proc.stdout is not None
     try:
@@ -142,7 +169,7 @@ async def _pump_command(
             if not raw:
                 break
             for note in session.ingest_line(raw.decode(errors="replace"), time.monotonic()):
-                _handle_notification(console, note, session, engine, quiet)
+                sink.handle(note)
     finally:
         with contextlib.suppress(ProcessLookupError):
             proc.terminate()
@@ -151,13 +178,13 @@ async def _pump_command(
 
 
 async def _pump_file(
-    path: Path, session: WatchSession, console: Console, engine, quiet: bool, stop: asyncio.Event
+    path: Path, session: WatchSession, sink: _NotificationSink, stop: asyncio.Event
 ) -> None:
     """Follow a file (tail -F-ish: seek to end, poll for new lines)."""
     try:
         fh = path.open("r", errors="replace")
     except OSError as exc:
-        console.print(f"[red]error:[/red] cannot open {path}: {exc}")
+        sink.console.print(f"[red]error:[/red] cannot open {path}: {exc}")
         raise typer.Exit(EXIT_ERROR) from None
     fh.seek(0, 2)
     try:
@@ -165,7 +192,7 @@ async def _pump_file(
             line = fh.readline()
             if line:
                 for note in session.ingest_line(line, time.monotonic()):
-                    _handle_notification(console, note, session, engine, quiet)
+                    sink.handle(note)
             else:
                 await asyncio.sleep(0.5)
     finally:
@@ -173,14 +200,15 @@ async def _pump_file(
 
 
 async def _tick_loop(
-    session: WatchSession, console: Console, engine, quiet: bool, stop: asyncio.Event
+    session: WatchSession, console: Console, sink: _NotificationSink, quiet: bool,
+    stop: asyncio.Event,
 ) -> None:
     last_status = 0.0
     while not stop.is_set():
         await asyncio.sleep(1.0)
         now = time.monotonic()
         for note in session.tick(now):
-            _handle_notification(console, note, session, engine, quiet)
+            sink.handle(note)
         if not quiet and now - last_status >= 30:
             last_status = now
             s = session.summary(now)
@@ -192,24 +220,67 @@ async def _tick_loop(
             )
 
 
-def _handle_notification(
-    console: Console, note: Notification, session: WatchSession, engine, quiet: bool
-) -> None:
-    _print_notification(console, note)
-    if engine is not None:
-        # Escalate through the same analysis engine: triggering window records
-        # plus baseline context, previous findings folded into the focus hint.
-        records = session.recent_records()
-        focus = (
-            f"live watch escalation; triggers: {', '.join(note.reasons)}; "
-            f"{session.baseline.summary()}; "
-            f"{len(session.notifications) - 1} previous findings this session"
+class _NotificationSink:
+    """Fans a watch notification out to the terminal, the optional LLM
+    escalation, and the optional Mattermost thread (first finding = root post,
+    later findings thread under it)."""
+
+    def __init__(self, console: Console, session: WatchSession, engine,
+                 notifier, channel: str | None, quiet: bool) -> None:
+        self.console = console
+        self.session = session
+        self.engine = engine
+        self.notifier = notifier
+        self.channel = channel
+        self.quiet = quiet
+
+    def handle(self, note: Notification) -> None:
+        _print_notification(self.console, note)
+        report = None
+        if self.engine is not None:
+            # Escalate through the same analysis engine: triggering window
+            # records plus baseline context, previous findings in the focus.
+            focus = (
+                f"live watch escalation; triggers: {', '.join(note.reasons)}; "
+                f"{self.session.baseline.summary()}; "
+                f"{len(self.session.notifications) - 1} previous findings this session"
+            )
+            try:
+                report = self.engine.analyze_records(
+                    self.session.recent_records(), source="watch stream", focus=focus
+                )
+                render_report(report, console=self.console)
+            except Exception as exc:  # noqa: BLE001 - keep the watch alive
+                self.console.print(f"[red]LLM escalation failed:[/red] {exc}")
+        if self.notifier is None:
+            return
+        if report is not None:
+            self.notifier.post_report(report, fingerprint=WATCH_THREAD_KEY,
+                                      channel=self.channel)
+        else:
+            related = " (related to previous finding)" if note.related_to_previous else ""
+            lines = [
+                f"**{note.severity.value.upper()}** {', '.join(note.reasons)}{related}",
+                note.detail,
+                f"window: {note.window_lines} lines, {note.window_errors} errors",
+            ]
+            lines += [f"> {ex}" for ex in note.exemplars[:3]]
+            self.notifier.post_text(
+                self.channel or self.notifier.config.default_channel,
+                "\n".join(lines),
+                fingerprint=WATCH_THREAD_KEY,
+            )
+
+    def post_summary(self) -> None:
+        if self.notifier is None or not self.session.notifications:
+            return
+        s = self.session.summary(time.monotonic())
+        self.notifier.post_text(
+            self.channel or self.notifier.config.default_channel,
+            f"watch session ended: {s.duration_s:.0f}s, {s.total_lines} lines, "
+            f"{s.total_errors} errors, {s.notifications} alerts ({s.suppressed} suppressed)",
+            fingerprint=WATCH_THREAD_KEY,
         )
-        try:
-            report = engine.analyze_records(records, source="watch stream", focus=focus)
-            render_report(report, console=console)
-        except Exception as exc:  # noqa: BLE001 - keep the watch alive
-            console.print(f"[red]LLM escalation failed:[/red] {exc}")
 
 
 def _print_notification(console: Console, note: Notification) -> None:

@@ -48,6 +48,12 @@ def analyze_command(
         None, "--format", help="Force input format: json|logfmt|access|syslog|plain."
     ),
     config_file: str | None = typer.Option(None, "--config", help="YAML config file."),
+    notify: str = typer.Option(
+        "none", "--notify", help="none | mattermost — post the report after analysis."
+    ),
+    channel: str | None = typer.Option(
+        None, "--channel", help="Mattermost channel override (with --notify mattermost)."
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Analyze a log file, stdin, or command output and produce a report."""
@@ -63,6 +69,9 @@ def analyze_command(
             raise SourceError(f"invalid --fail-on {fail_on!r}; use sev1|sev2|sev3|info") from None
         if since:
             parse_since(since)  # validate early
+        if notify not in ("none", "mattermost"):
+            raise SourceError(f"invalid --notify {notify!r}; use none|mattermost")
+        notifier = build_notifier(config) if notify == "mattermost" else None
         resolved = resolve_source(source, since=since)
     except (SourceError, ValueError) as exc:
         err.print(f"[red]error:[/red] {exc}")
@@ -90,6 +99,23 @@ def analyze_command(
     else:
         render_report(report, verbose=verbose)
 
+    if notifier is not None:
+        # Delivery failures never change the analysis exit code — the client
+        # queues undeliverable messages and logs to stderr.
+        notifier.post_report(report, channel=channel)
+
     if report.fails_threshold(fail_threshold):
         raise typer.Exit(EXIT_FINDINGS)
     raise typer.Exit(EXIT_OK)
+
+
+def build_notifier(config):
+    """Construct a MattermostNotifier or raise SourceError if unconfigured."""
+    from ai_ops_agent.mattermost.client import MattermostClient, MattermostError
+    from ai_ops_agent.mattermost.notify import MattermostNotifier
+
+    try:
+        client = MattermostClient(config.mattermost)
+    except MattermostError as exc:
+        raise SourceError(str(exc)) from None
+    return MattermostNotifier(client, config.mattermost)

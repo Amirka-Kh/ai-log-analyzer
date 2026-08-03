@@ -52,7 +52,12 @@ exposed to the LLM.
 | `--model` | config | Override the LLM model id |
 | `--format` | auto | Force input format: `json`\|`logfmt`\|`access`\|`syslog`\|`plain` |
 | `--config` | — | YAML config file |
+| `--notify` | `none` | `none` \| `mattermost` — post the report card (+ full markdown attachment) after analysis |
+| `--channel` | routed | Mattermost channel override; default follows severity/verdict routing |
 | `--verbose, -v` | off | Show per-finding evidence excerpts |
+
+Notification delivery never changes the exit code: undeliverable messages are
+persisted to the retry queue and logged to stderr.
 
 ### Supported input formats (auto-detected)
 
@@ -97,6 +102,8 @@ ai-ops watch "docker logs -f api" --restart --quiet
 | `--llm/--no-llm` | `--no-llm` | Explain escalations with the LLM (triggering window + baseline + prior findings) |
 | `--quiet, -q` | off | Suppress the periodic status line |
 | `--format` | auto | Force input format |
+| `--notify` | `none` | `none` \| `mattermost` — first finding becomes the root post, subsequent findings and the session summary thread under it |
+| `--channel` | routed | Mattermost channel override |
 
 ## `ai-ops version`
 

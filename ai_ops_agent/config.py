@@ -55,6 +55,35 @@ class WatchConfig(BaseSettings):
     max_alerts_per_hour: int = 10
 
 
+class MattermostConfig(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="AI_OPS_MATTERMOST_", extra="ignore")
+
+    # Bot account + Personal Access Token (preferred: enables threading, message
+    # updates, and file uploads). ``webhook_url`` is a reduced-feature fallback.
+    url: str | None = None  # e.g. https://mattermost.example.com
+    token: str | None = None
+    team: str | None = None
+    webhook_url: str | None = None
+
+    default_channel: str = "ops-alerts"
+    # Routing per spec §8; unset values fall back to default_channel.
+    alerts_channel: str | None = None  # sev1/sev2
+    noise_channel: str | None = None  # false_positive / noisy_rule
+    mention_sev1: str = "@here"
+
+    # Mattermost caps messages at 4000 chars; leave headroom for mentions.
+    max_message_chars: int = 3800
+    max_retries: int = 3
+    backoff_base_s: float = 1.0
+    request_timeout_s: float = 15.0
+    # Failed posts persist here so a Mattermost outage doesn't lose an incident.
+    queue_path: str = "~/.ai-ops/mattermost-queue.jsonl"
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.webhook_url or (self.url and self.token))
+
+
 class AppConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AI_OPS_", extra="ignore")
 
@@ -63,6 +92,7 @@ class AppConfig(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     analyze: AnalyzeConfig = Field(default_factory=AnalyzeConfig)
     watch: WatchConfig = Field(default_factory=WatchConfig)
+    mattermost: MattermostConfig = Field(default_factory=MattermostConfig)
 
 
 def load_config(yaml_path: str | Path | None = None) -> AppConfig:
@@ -83,4 +113,5 @@ def load_config(yaml_path: str | Path | None = None) -> AppConfig:
         llm=LLMConfig(**data.get("llm", {})),
         analyze=AnalyzeConfig(**data.get("analyze", {})),
         watch=WatchConfig(**data.get("watch", {})),
+        mattermost=MattermostConfig(**data.get("mattermost", {})),
     )
