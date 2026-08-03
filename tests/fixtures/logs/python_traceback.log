@@ -1,0 +1,11 @@
+2026-08-01 10:00:00,123 INFO worker started pid=4242
+2026-08-01 10:00:10,000 INFO picked up job id=771
+2026-08-01 10:00:11,502 ERROR job 771 crashed
+Traceback (most recent call last):
+  File "/app/worker.py", line 55, in run_job
+    result = handler(payload)
+  File "/app/handlers.py", line 23, in handle_report
+    total = amounts["total"]
+KeyError: 'total'
+2026-08-01 10:00:12,000 INFO picked up job id=772
+2026-08-01 10:00:12,900 INFO job 772 done in 0.9s

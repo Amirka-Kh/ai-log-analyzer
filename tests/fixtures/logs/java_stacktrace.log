@@ -1,0 +1,16 @@
+2026-08-01T10:00:00.123Z INFO  [main] c.e.OrderService - Service starting
+2026-08-01T10:00:05.456Z INFO  [main] c.e.OrderService - Connected to kafka broker-1:9092
+2026-08-01T10:02:13.789Z ERROR [pool-2-thread-1] c.e.OrderService - Failed to process order 99123
+java.lang.NullPointerException: Cannot invoke "com.example.Customer.getId()" because "customer" is null
+	at com.example.OrderService.process(OrderService.java:142)
+	at com.example.OrderService.lambda$poll$0(OrderService.java:88)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)
+	at java.base/java.lang.Thread.run(Thread.java:833)
+Caused by: java.lang.IllegalStateException: customer cache miss
+	at com.example.CustomerCache.get(CustomerCache.java:57)
+	... 3 more
+2026-08-01T10:02:20.001Z ERROR [pool-2-thread-1] c.e.OrderService - Failed to process order 99124
+java.lang.NullPointerException: Cannot invoke "com.example.Customer.getId()" because "customer" is null
+	at com.example.OrderService.process(OrderService.java:142)
+	at java.base/java.lang.Thread.run(Thread.java:833)
+2026-08-01T10:03:00.000Z INFO  [main] c.e.OrderService - Processed batch of 250 orders
