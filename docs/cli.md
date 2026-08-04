@@ -50,6 +50,7 @@ exposed to the LLM.
 | `--redact/--no-redact` | on | Redact secrets/PII before anything reaches the LLM or a report |
 | `--fail-on` | `sev2` | Threshold for exit code 1 (`sev1`\|`sev2`\|`sev3`\|`info`) |
 | `--model` | config | Override the LLM model id |
+| `--provider` | `anthropic` | `anthropic` \| `openai` — the openai provider also covers self-hosted OpenAI-compatible endpoints (vLLM, Ollama, LiteLLM) via `AI_OPS_LLM_OPENAI_BASE_URL` |
 | `--format` | auto | Force input format: `json`\|`logfmt`\|`access`\|`syslog`\|`plain` |
 | `--config` | — | YAML config file |
 | `--notify` | `none` | `none` \| `mattermost` — post the report card (+ full markdown attachment) after analysis |

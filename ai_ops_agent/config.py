@@ -16,10 +16,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class LLMConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AI_OPS_LLM_", extra="ignore")
 
+    # "anthropic" (default) or "openai". The openai provider speaks the
+    # Chat Completions API, so it also covers self-hosted OpenAI-compatible
+    # servers (vLLM, Ollama, LiteLLM) via ``openai_base_url``.
+    provider: str = "anthropic"
     # Strong model drives the reasoning/report loop; the fast model is reserved
     # for cheap classification tasks (dedupe summaries, clustering hints).
     model: str = "claude-opus-5"
     fast_model: str = "claude-haiku-4-5"
+    # OpenAI-provider settings. The key falls back to the standard
+    # OPENAI_API_KEY env var; self-hosted endpoints may not need one.
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_api_key: str | None = None
     max_output_tokens: int = 16000
     # Budget for the compact context we hand to the model (characters, not tokens —
     # deterministic and cheap to enforce while streaming).

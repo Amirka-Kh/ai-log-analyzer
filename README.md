@@ -23,7 +23,11 @@ into the *same* engine in later phases.
 
 ```bash
 pipx install .            # or: pip install .
-export ANTHROPIC_API_KEY=sk-ant-...
+export ANTHROPIC_API_KEY=sk-ant-...   # default provider
+# or use OpenAI / any OpenAI-compatible endpoint (vLLM, Ollama, LiteLLM):
+#   export OPENAI_API_KEY=sk-...
+#   ai-ops analyze --source app.log --provider openai --model gpt-4.1
+#   AI_OPS_LLM_OPENAI_BASE_URL=http://localhost:11434/v1 for self-hosted
 
 ai-ops analyze --source app.log                 # full LLM-backed report
 ai-ops analyze --source app.log --no-llm        # deterministic only, no key needed
@@ -84,6 +88,9 @@ Precedence: env vars (`AI_OPS_*`) > YAML (`--config file.yaml`) > defaults.
 
 | Setting | Env var | Default |
 |---|---|---|
+| LLM provider | `AI_OPS_LLM_PROVIDER` | `anthropic` (`openai` for OpenAI or any OpenAI-compatible endpoint) |
+| OpenAI base URL | `AI_OPS_LLM_OPENAI_BASE_URL` | `https://api.openai.com/v1` (point at vLLM/Ollama/LiteLLM for self-hosted) |
+| OpenAI API key | `AI_OPS_LLM_OPENAI_API_KEY` (falls back to `OPENAI_API_KEY`) | — |
 | Strong model | `AI_OPS_LLM_MODEL` | `claude-opus-5` |
 | Fast model (classification, later phases) | `AI_OPS_LLM_FAST_MODEL` | `claude-haiku-4-5` |
 | LLM context budget (chars) | `AI_OPS_LLM_MAX_CONTEXT_CHARS` | `60000` |

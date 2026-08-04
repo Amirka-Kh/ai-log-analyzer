@@ -18,7 +18,7 @@ from rich.console import Console
 
 from ai_ops_agent.config import load_config
 from ai_ops_agent.core.orchestrator import AnalysisEngine
-from ai_ops_agent.llm.client import make_client
+from ai_ops_agent.llm.client import LLMError, make_client
 from ai_ops_agent.reporting.renderers.terminal import SEVERITY_STYLE, render_report
 from ai_ops_agent.streaming.watch import Notification, WatchSession
 
@@ -50,6 +50,9 @@ def watch_command(
     channel: str | None = typer.Option(
         None, "--channel", help="Mattermost channel override (with --notify mattermost)."
     ),
+    provider: str | None = typer.Option(
+        None, "--provider", help="LLM provider: anthropic | openai."
+    ),
 ) -> None:
     """Continuously watch a stream; learn a baseline, then alert on anomalies."""
     err = Console(stderr=True)
@@ -66,7 +69,13 @@ def watch_command(
     config.watch.cooldown_seconds = cooldown
     config.watch.max_alerts_per_hour = max_alerts
 
-    llm_client = None if no_llm else make_client(config.llm)
+    if provider:
+        config.llm.provider = provider
+    try:
+        llm_client = None if no_llm else make_client(config.llm)
+    except LLMError as exc:
+        err.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(EXIT_ERROR) from None
     engine = AnalysisEngine(config, llm_client=llm_client) if llm_client else None
 
     notifier = None

@@ -9,7 +9,7 @@ from rich.console import Console
 
 from ai_ops_agent.config import load_config
 from ai_ops_agent.core.orchestrator import AnalysisEngine, parse_since
-from ai_ops_agent.llm.client import make_client
+from ai_ops_agent.llm.client import LLMError, make_client
 from ai_ops_agent.reporting.models import Severity
 from ai_ops_agent.reporting.renderers.markdown import render_markdown
 from ai_ops_agent.reporting.renderers.terminal import render_report
@@ -44,6 +44,12 @@ def analyze_command(
         "sev2", "--fail-on", help="Exit 1 when findings at or above this severity exist."
     ),
     model: str | None = typer.Option(None, "--model", help="Override the LLM model id."),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="LLM provider: anthropic | openai (openai also covers self-hosted "
+        "OpenAI-compatible endpoints via AI_OPS_LLM_OPENAI_BASE_URL).",
+    ),
     fmt: str | None = typer.Option(
         None, "--format", help="Force input format: json|logfmt|access|syslog|plain."
     ),
@@ -63,6 +69,8 @@ def analyze_command(
         config.redact = redact
         if model:
             config.llm.model = model
+        if provider:
+            config.llm.provider = provider
         try:
             fail_threshold = Severity(fail_on)
         except ValueError:
@@ -73,11 +81,11 @@ def analyze_command(
             raise SourceError(f"invalid --notify {notify!r}; use none|mattermost")
         notifier = build_notifier(config) if notify == "mattermost" else None
         resolved = resolve_source(source, since=since)
-    except (SourceError, ValueError) as exc:
+        llm_client = None if no_llm else make_client(config.llm)
+    except (SourceError, ValueError, LLMError) as exc:
         err.print(f"[red]error:[/red] {exc}")
         raise typer.Exit(EXIT_ERROR) from None
 
-    llm_client = None if no_llm else make_client(config.llm)
     engine = AnalysisEngine(config, llm_client=llm_client)
 
     try:
