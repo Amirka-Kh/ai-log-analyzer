@@ -84,7 +84,7 @@ one retry, then degrade to deterministic output).
 
 ## Configuration
 
-Precedence: env vars (`AI_OPS_*`) > YAML (`--config file.yaml`) > defaults.
+Precedence: real env vars > `.env` file (working directory or any parent, loaded automatically — see `.env.example`) > YAML (`--config file.yaml`) > defaults. The `.env` file also covers `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`.
 
 | Setting | Env var | Default |
 |---|---|---|

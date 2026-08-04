@@ -1,7 +1,12 @@
 """Application configuration.
 
-Precedence: environment variables (``AI_OPS_`` prefix) > YAML file passed via
-``load_config(path)`` > defaults. Validated at startup; fail fast on bad values.
+Precedence: process environment variables > ``.env`` file in the working
+directory (or any parent) > YAML file passed via ``load_config(path)`` >
+defaults. Validated at startup; fail fast on bad values.
+
+The ``.env`` file is loaded into the process environment, so it covers both
+the ``AI_OPS_*`` settings and the provider keys read directly from the
+environment (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``).
 """
 
 from __future__ import annotations
@@ -9,11 +14,28 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml  # type: ignore[import-untyped]
+from dotenv import find_dotenv, load_dotenv
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 
-class LLMConfig(BaseSettings):
+class EnvFirstSettings(BaseSettings):
+    """Base for all config sections: environment variables outrank the init
+    kwargs we pass from the YAML overlay (pydantic's default is the reverse)."""
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (env_settings, dotenv_settings, init_settings, file_secret_settings)
+
+
+class LLMConfig(EnvFirstSettings):
     model_config = SettingsConfigDict(env_prefix="AI_OPS_LLM_", extra="ignore")
 
     # "anthropic" (default) or "openai". The openai provider speaks the
@@ -35,7 +57,7 @@ class LLMConfig(BaseSettings):
     request_timeout_s: float = 120.0
 
 
-class AnalyzeConfig(BaseSettings):
+class AnalyzeConfig(EnvFirstSettings):
     model_config = SettingsConfigDict(env_prefix="AI_OPS_ANALYZE_", extra="ignore")
 
     # Top-N templates shown to the model / in reports.
@@ -48,7 +70,7 @@ class AnalyzeConfig(BaseSettings):
     max_timeline_buckets: int = 500
 
 
-class WatchConfig(BaseSettings):
+class WatchConfig(EnvFirstSettings):
     model_config = SettingsConfigDict(env_prefix="AI_OPS_WATCH_", extra="ignore")
 
     window_seconds: float = 60.0
@@ -63,7 +85,7 @@ class WatchConfig(BaseSettings):
     max_alerts_per_hour: int = 10
 
 
-class MattermostConfig(BaseSettings):
+class MattermostConfig(EnvFirstSettings):
     model_config = SettingsConfigDict(env_prefix="AI_OPS_MATTERMOST_", extra="ignore")
 
     # Bot account + Personal Access Token (preferred: enables threading, message
@@ -92,7 +114,7 @@ class MattermostConfig(BaseSettings):
         return bool(self.webhook_url or (self.url and self.token))
 
 
-class AppConfig(BaseSettings):
+class AppConfig(EnvFirstSettings):
     model_config = SettingsConfigDict(env_prefix="AI_OPS_", extra="ignore")
 
     redact: bool = True
@@ -103,12 +125,21 @@ class AppConfig(BaseSettings):
     mattermost: MattermostConfig = Field(default_factory=MattermostConfig)
 
 
-def load_config(yaml_path: str | Path | None = None) -> AppConfig:
-    """Build config from defaults, optional YAML overlay, then env vars.
+def load_config(
+    yaml_path: str | Path | None = None, env_file: str | Path | None = None
+) -> AppConfig:
+    """Build config from defaults, optional YAML overlay, ``.env``, then env vars.
 
     Env vars win because pydantic-settings applies them on top of the init
-    kwargs we pass from YAML.
+    kwargs we pass from YAML. ``.env`` values are loaded into the process
+    environment but never override variables that are already set, so real
+    environment variables keep the highest precedence.
     """
+    if env_file is not None:
+        load_dotenv(env_file, override=False)
+    else:
+        # Searches the working directory and its parents for a .env file.
+        load_dotenv(find_dotenv(usecwd=True), override=False)
     data: dict = {}
     if yaml_path is not None:
         raw = yaml.safe_load(Path(yaml_path).read_text()) or {}
