@@ -14,6 +14,12 @@ import typer
 
 from ai_ops_agent import __version__
 from ai_ops_agent.cli.analyze import analyze_command
+from ai_ops_agent.cli.investigate import (
+    config_check_command,
+    investigate_command,
+    serve_command,
+    tools_list_command,
+)
 from ai_ops_agent.cli.watch import watch_command
 
 app = typer.Typer(
@@ -25,6 +31,16 @@ app = typer.Typer(
 
 app.command("analyze")(analyze_command)
 app.command("watch")(watch_command)
+app.command("investigate")(investigate_command)
+app.command("serve")(serve_command)
+
+config_app = typer.Typer(help="Configuration helpers.", no_args_is_help=True)
+config_app.command("check")(config_check_command)
+app.add_typer(config_app, name="config")
+
+tools_app = typer.Typer(help="Tool inspection.", no_args_is_help=True)
+tools_app.command("list")(tools_list_command)
+app.add_typer(tools_app, name="tools")
 
 
 @app.command("version")

@@ -39,8 +39,36 @@ class LLMResult:
     output_tokens: int | None = None
 
 
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass
+class AgentStep:
+    """One turn of the agent loop: either tool calls to execute, or final text.
+
+    ``messages`` carries the provider-neutral history to feed back on the next
+    step (assistant turn + any tool calls already appended).
+    """
+
+    tool_calls: list[ToolCall]
+    text: str
+    messages: list[dict[str, Any]]
+
+
 class LLMClient(Protocol):
     def generate_verdict(self, system: str, user: str) -> LLMResult: ...
+
+    def agent_step(
+        self, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> AgentStep:
+        """Run one model turn with tools. ``messages`` is a provider-neutral
+        history (roles: user/assistant/tool). Returns requested tool calls or
+        the final text, plus the updated message history."""
+        ...
 
 
 class AnthropicLLMClient:
@@ -102,6 +130,85 @@ class AnthropicLLMClient:
             output_tokens=getattr(usage, "output_tokens", None),
         )
 
+    def agent_step(
+        self, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> AgentStep:
+        import anthropic
+
+        client = self._get_client()
+        anthropic_tools = [
+            {"name": t["name"], "description": t["description"],
+             "input_schema": t["parameters"] if "parameters" in t else t["input_schema"]}
+            for t in tools
+        ]
+        try:
+            response = client.messages.create(
+                model=self.config.model,
+                max_tokens=self.config.max_output_tokens,
+                system=system,
+                messages=_neutral_to_anthropic(messages),
+                tools=anthropic_tools,
+            )
+        except anthropic.AuthenticationError as exc:
+            raise LLMError(
+                "authentication failed — set ANTHROPIC_API_KEY (or run with --no-llm)"
+            ) from exc
+        except anthropic.APIConnectionError as exc:
+            raise LLMError(f"cannot reach the LLM API: {exc}") from exc
+        except anthropic.APIStatusError as exc:
+            raise LLMError(f"LLM API error {exc.status_code}: {exc.message}") from exc
+
+        text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        for block in response.content:
+            if block.type == "text":
+                text_parts.append(block.text)
+            elif block.type == "tool_use":
+                tool_calls.append(
+                    ToolCall(id=block.id, name=block.name, arguments=dict(block.input))
+                )
+        assistant_msg: dict[str, Any] = {"role": "assistant", "content": " ".join(text_parts)}
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+        return AgentStep(
+            tool_calls=tool_calls, text=" ".join(text_parts),
+            messages=[*messages, assistant_msg],
+        )
+
+
+def _neutral_to_anthropic(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    pending_results: list[dict[str, Any]] = []
+
+    def flush_results() -> None:
+        nonlocal pending_results
+        if pending_results:
+            out.append({"role": "user", "content": pending_results})
+            pending_results = []
+
+    for msg in messages:
+        role = msg["role"]
+        if role == "tool":
+            pending_results.append(
+                {"type": "tool_result", "tool_use_id": msg["tool_call_id"],
+                 "content": msg["content"]}
+            )
+            continue
+        flush_results()
+        if role == "user":
+            out.append({"role": "user", "content": [{"type": "text", "text": msg["content"]}]})
+        elif role == "assistant":
+            blocks: list[dict[str, Any]] = []
+            if msg.get("content"):
+                blocks.append({"type": "text", "text": msg["content"]})
+            for tc in msg.get("tool_calls", []):
+                blocks.append(
+                    {"type": "tool_use", "id": tc.id, "name": tc.name, "input": tc.arguments}
+                )
+            out.append({"role": "assistant", "content": blocks})
+    flush_results()
+    return out
+
 
 class OpenAILLMClient:
     """OpenAI Chat Completions client (works with self-hosted compatible APIs).
@@ -156,6 +263,40 @@ class OpenAILLMClient:
             output_tokens=usage.get("completion_tokens"),
         )
 
+    def agent_step(
+        self, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> AgentStep:
+        wire_messages = [{"role": "system", "content": system}]
+        wire_messages.extend(_neutral_to_openai(messages))
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "max_completion_tokens": self.config.max_output_tokens,
+            "messages": wire_messages,
+            "tools": tools,
+        }
+        data = self._post_with_compat(payload)
+        try:
+            choice = data["choices"][0]["message"]
+        except (KeyError, IndexError) as exc:
+            raise LLMError(f"malformed Chat Completions response: {exc}") from exc
+
+        text = choice.get("content") or ""
+        tool_calls: list[ToolCall] = []
+        for raw in choice.get("tool_calls") or []:
+            fn = raw.get("function", {})
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            tool_calls.append(ToolCall(id=raw["id"], name=fn.get("name", ""), arguments=args))
+
+        assistant_msg: dict[str, Any] = {"role": "assistant", "content": text}
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+        return AgentStep(
+            tool_calls=tool_calls, text=text, messages=[*messages, assistant_msg]
+        )
+
     def _post_with_compat(self, payload: dict[str, Any]) -> dict[str, Any]:
         """POST /chat/completions, degrading gracefully for older
         OpenAI-compatible servers that reject newer parameters."""
@@ -184,6 +325,31 @@ class OpenAILLMClient:
                 raise LLMError(f"LLM API error {resp.status_code}: {resp.text[:200]}")
             return resp.json()
         raise LLMError("LLM API rejected the request after compatibility retries")
+
+
+def _neutral_to_openai(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for msg in messages:
+        role = msg["role"]
+        if role == "tool":
+            out.append(
+                {"role": "tool", "tool_call_id": msg["tool_call_id"], "content": msg["content"]}
+            )
+        elif role == "assistant":
+            entry: dict[str, Any] = {"role": "assistant", "content": msg.get("content") or None}
+            if msg.get("tool_calls"):
+                entry["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+                    }
+                    for tc in msg["tool_calls"]
+                ]
+            out.append(entry)
+        else:
+            out.append({"role": "user", "content": msg["content"]})
+    return out
 
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)

@@ -114,6 +114,70 @@ class MattermostConfig(EnvFirstSettings):
         return bool(self.webhook_url or (self.url and self.token))
 
 
+class MetricsConfig(EnvFirstSettings):
+    """VictoriaMetrics access — HTTP API with a dedicated read-only account."""
+
+    model_config = SettingsConfigDict(env_prefix="AI_OPS_METRICS_", extra="ignore")
+
+    url: str | None = None  # vmselect base, e.g. http://vmselect:8481/select/0/prometheus
+    bearer_token: str | None = None
+    username: str | None = None
+    password: str | None = None
+    request_timeout_s: float = 15.0
+    # Hard limits per spec §6: cap step count and series returned.
+    max_range_steps: int = 500
+    max_series: int = 50
+    max_result_chars: int = 8_000
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.url)
+
+
+class K8sConfig(EnvFirstSettings):
+    """Kubernetes access — REST API with a dedicated ServiceAccount token.
+
+    In-cluster the defaults pick up the mounted ServiceAccount; out of
+    cluster set api_url + token (or token_path) explicitly.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AI_OPS_K8S_", extra="ignore")
+
+    api_url: str | None = None  # e.g. https://kubernetes.default.svc
+    token: str | None = None
+    token_path: str = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    ca_cert_path: str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    verify_tls: bool = True
+    # Namespace allowlist (empty = deny all; explicit opt-in per spec §6).
+    namespaces: list[str] = Field(default_factory=list)
+    request_timeout_s: float = 15.0
+    max_log_lines: int = 200
+    max_log_bytes: int = 64_000
+    max_result_chars: int = 8_000
+    events_window_minutes: int = 30
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_url)
+
+
+class ServerConfig(EnvFirstSettings):
+    """Webhook API server + alert gating."""
+
+    model_config = SettingsConfigDict(env_prefix="AI_OPS_SERVER_", extra="ignore")
+
+    host: str = "0.0.0.0"
+    port: int = 8080
+    # Shared secret required in the X-AIOps-Token header on webhook posts.
+    webhook_secret: str | None = None
+    db_path: str = "~/.ai-ops/aiops.db"
+    # Gate-before-spending-tokens knobs (spec §4.3).
+    cooldown_minutes: int = 30
+    flap_transitions: int = 4
+    flap_window_minutes: int = 10
+    group_window_seconds: float = 60.0
+
+
 class AppConfig(EnvFirstSettings):
     model_config = SettingsConfigDict(env_prefix="AI_OPS_", extra="ignore")
 
@@ -123,6 +187,9 @@ class AppConfig(EnvFirstSettings):
     analyze: AnalyzeConfig = Field(default_factory=AnalyzeConfig)
     watch: WatchConfig = Field(default_factory=WatchConfig)
     mattermost: MattermostConfig = Field(default_factory=MattermostConfig)
+    metrics: MetricsConfig = Field(default_factory=MetricsConfig)
+    k8s: K8sConfig = Field(default_factory=K8sConfig)
+    server: ServerConfig = Field(default_factory=ServerConfig)
 
 
 def load_config(
@@ -153,4 +220,7 @@ def load_config(
         analyze=AnalyzeConfig(**data.get("analyze", {})),
         watch=WatchConfig(**data.get("watch", {})),
         mattermost=MattermostConfig(**data.get("mattermost", {})),
+        metrics=MetricsConfig(**data.get("metrics", {})),
+        k8s=K8sConfig(**data.get("k8s", {})),
+        server=ServerConfig(**data.get("server", {})),
     )

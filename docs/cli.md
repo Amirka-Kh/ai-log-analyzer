@@ -109,3 +109,48 @@ ai-ops watch "docker logs -f api" --restart --quiet
 ## `ai-ops version`
 
 Print the version.
+
+## `ai-ops investigate`
+
+Cluster-backed investigation from the terminal — the same agent loop the webhook
+path runs, rendered to the TTY.
+
+```bash
+ai-ops investigate --alert-name HighMemoryUsage --namespace prod
+ai-ops investigate --pod api-7d9f-xk2 --namespace prod --verbose
+```
+
+| Flag | Description |
+|---|---|
+| `--alert-name` | Alert name to investigate (or use `--pod`/`--workload`) |
+| `--namespace, -n` | Namespace (must be in the K8s allowlist) |
+| `--pod` / `--workload` | Target object |
+| `--cluster` / `--node` | Extra correlation labels |
+| `--no-llm` | Skip the LLM (limited — deterministic pre-fetch only) |
+| `--provider` | `anthropic` \| `openai` |
+| `--verbose, -v` | Print the tool-call audit log |
+
+## `ai-ops serve`
+
+Run the webhook API (Alertmanager/Grafana ingest + `/investigate`).
+
+```bash
+ai-ops serve --port 8080
+```
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /webhook/alertmanager` | Alertmanager/vmalert v4 payload (auth: `X-AIOps-Token`) |
+| `POST /webhook/grafana` | Grafana unified-alerting payload |
+| `POST /investigate` | Ad-hoc `{alert_name, namespace, pod, ...}` |
+| `GET /healthz` | Liveness + queue depth |
+| `GET /metrics` | Prometheus text (queue depth, feedback count, verdict accuracy) |
+
+Webhooks respond `202` immediately and process out of band. Auth is disabled
+(with a warning) only when `AI_OPS_SERVER_WEBHOOK_SECRET` is unset.
+
+## `ai-ops config check` / `ai-ops tools list`
+
+`config check` prints which backends (LLM provider, VictoriaMetrics, Kubernetes,
+Mattermost, webhook auth, redaction) are configured. `tools list` prints which
+tools are enabled and the pre-fetch collector count.

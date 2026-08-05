@@ -13,8 +13,8 @@ into the *same* engine in later phases.
 | 1 | Core engine + `ai-ops analyze` (parsing, template clustering, signals, LLM verdict, terminal renderer) | ✅ implemented |
 | 2 | `ai-ops watch` (streaming, baseline learning, trigger policy, cooldowns, session summary) | ✅ implemented |
 | 3 | Mattermost outbound (cards, threading, channel routing, retry queue) | ✅ implemented |
-| 4 | Reactive alert path (webhook ingest, dedupe, cluster tool layer, agent loop) | ⏳ next |
-| 5 | Mattermost inbound (slash commands, buttons, feedback) | ⏳ |
+| 4 | Reactive alert path (webhook ingest, dedupe/flap/grouping, cluster tool layer, agent loop) | ✅ implemented |
+| 5 | Mattermost inbound (slash commands, buttons, feedback) | ⏳ next |
 | 6 | SSH diagnostic tool (allowlisted) | ⏳ |
 | 7 | Night audit | ⏳ |
 | 8 | Hardening (eval harness, Helm, dashboards) | ⏳ |
@@ -137,6 +137,48 @@ delivery, so a Mattermost outage doesn't lose an incident.
 
 `AI_OPS_MATTERMOST_WEBHOOK_URL` is a fallback for the simplest deployments —
 note the feature loss: no threading, no message updates, no file uploads.
+
+### Reactive alert path (Phase 4)
+
+Run the webhook API and let it triage alerts as they fire:
+
+```bash
+export AI_OPS_SERVER_WEBHOOK_SECRET=some-shared-secret
+# Kubernetes — REST API with a dedicated read-only ServiceAccount (no kubectl):
+export AI_OPS_K8S_API_URL=https://kubernetes.default.svc
+export AI_OPS_K8S_NAMESPACES='["prod","stage"]'   # allowlist (deny by default)
+#   in-cluster the SA token + CA are read from the mounted paths automatically;
+#   out of cluster set AI_OPS_K8S_TOKEN explicitly.
+# VictoriaMetrics — vmselect HTTP API with a dedicated account:
+export AI_OPS_METRICS_URL=http://vmselect:8481/select/0/prometheus
+export AI_OPS_METRICS_BEARER_TOKEN=...
+
+ai-ops serve --port 8080
+```
+
+Point Alertmanager/vmalert at `POST /webhook/alertmanager` and Grafana unified
+alerting at `POST /webhook/grafana`, with the secret in the `X-AIOps-Token`
+header. Each alert is normalized to a canonical `Alert`, then **gated before
+spending tokens**: resolved-with-no-investigation, cooldown (attach to the
+existing investigation), flapping (N transitions in M minutes), silences, and
+correlated-alert grouping are all handled deterministically. Surviving alerts
+run the **agent loop** — a deterministic context pre-fetch (pod/workload state,
+namespace events, last logs, alert expression value) seeds turn 1, then the LLM
+iterates hypothesis → tool call → observation under a hard budget (12 tool
+calls / 90s), and produces a structured, evidence-validated verdict. All tools
+are **read-only**; nothing is ever remediated.
+
+Ad-hoc from the terminal (same engine, same `Report`):
+
+```bash
+ai-ops investigate --alert-name HighMemoryUsage --namespace prod
+ai-ops investigate --pod api-7d9f-xk2 --namespace prod --verbose
+ai-ops config check     # which backends are configured
+ai-ops tools list       # which tools are enabled and why
+```
+
+`GET /healthz` and `GET /metrics` (Prometheus text: queue depth, feedback
+count, verdict accuracy) are exposed for the agent's own observability.
 
 See [docs/cli.md](docs/cli.md) for the full command reference and
 [SECURITY.md](SECURITY.md) for the threat model.
