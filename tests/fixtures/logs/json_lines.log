@@ -1,0 +1,12 @@
+{"timestamp": "2026-08-01T10:00:01Z", "level": "info", "message": "server started on port 8080", "service": "api"}
+{"timestamp": "2026-08-01T10:00:05Z", "level": "info", "message": "connected to database db-primary", "service": "api"}
+{"timestamp": "2026-08-01T10:01:00Z", "level": "info", "message": "GET /health 200 3ms", "service": "api"}
+{"timestamp": "2026-08-01T10:02:00Z", "level": "info", "message": "GET /health 200 2ms", "service": "api"}
+{"timestamp": "2026-08-01T10:03:11Z", "level": "warning", "message": "slow query took 1523ms on orders", "service": "api"}
+{"timestamp": "2026-08-01T10:04:00Z", "level": "info", "message": "GET /health 200 4ms", "service": "api"}
+{"timestamp": "2026-08-01T10:05:02Z", "level": "error", "message": "connection pool exhausted: waited 5000ms for a connection", "service": "api"}
+{"timestamp": "2026-08-01T10:05:04Z", "level": "error", "message": "connection pool exhausted: waited 5001ms for a connection", "service": "api"}
+{"timestamp": "2026-08-01T10:05:07Z", "level": "error", "message": "connection pool exhausted: waited 5003ms for a connection", "service": "api"}
+{"timestamp": "2026-08-01T10:05:09Z", "level": "error", "message": "request failed for user 8231: upstream timeout after 30s", "service": "api"}
+{"timestamp": "2026-08-01T10:05:20Z", "level": "critical", "message": "worker killed: Out of memory (OOMKilled)", "service": "api"}
+{"timestamp": "2026-08-01T10:06:00Z", "level": "info", "message": "GET /health 200 5ms", "service": "api"}

@@ -1,0 +1,8 @@
+Aug  1 10:00:01 web-1 sshd[1201]: Accepted publickey for deploy from 10.0.0.5 port 51234 ssh2
+Aug  1 10:00:44 web-1 sshd[1215]: Failed password for root from 185.220.101.4 port 33001 ssh2
+Aug  1 10:00:46 web-1 sshd[1216]: Failed password for root from 185.220.101.4 port 33002 ssh2
+Aug  1 10:00:48 web-1 sshd[1217]: Failed password for invalid user admin from 185.220.101.4 port 33003 ssh2
+Aug  1 10:01:02 web-1 sudo[1300]: deploy : TTY=pts/0 ; PWD=/home/deploy ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx
+Aug  1 10:01:10 web-1 systemd[1]: nginx.service: Deactivated successfully.
+Aug  1 10:01:11 web-1 systemd[1]: Started nginx.service.
+Aug  1 10:05:00 web-1 kernel: [12345.678] TCP: request_sock_TCP: Possible SYN flooding on port 443.
